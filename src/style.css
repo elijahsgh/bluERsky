@@ -1,0 +1,149 @@
+:root {
+  color-scheme: dark;
+  --bg: #0b1016;
+  --panel: #121a24;
+  --border: #223042;
+  --text: #e6edf3;
+  --muted: #8b9bb0;
+  --accent: #38bdf8;
+  --green: #4ade80;
+  --danger: #f87171;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 16px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.45;
+}
+
+.wrap {
+  max-width: 720px;
+  margin: 0 auto;
+  display: grid;
+  gap: 12px;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px;
+}
+
+h1 {
+  margin: 0 0 4px;
+  font-size: 18px;
+  color: var(--accent);
+}
+
+.sub {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.status {
+  font-size: 13px;
+  color: var(--green);
+}
+
+.error {
+  font-size: 12px;
+  color: var(--danger);
+  margin-top: 8px;
+}
+
+.form-grid {
+  display: grid;
+  gap: 8px;
+}
+
+label {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+input {
+  width: 100%;
+  background: #0b1118;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 13px;
+}
+
+input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+button {
+  background: #1b2636;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 12px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+button:hover {
+  border-color: var(--accent);
+}
+
+button.primary {
+  background: #0ea5e9;
+  border-color: #0ea5e9;
+  color: #061018;
+  font-weight: 700;
+}
+
+button.danger {
+  border-color: #7f1d1d;
+  color: var(--danger);
+}
+
+.preview {
+  background: #050a06;
+  border: 1px solid #1a3b22;
+  color: #5cff7a;
+  padding: 12px;
+  border-radius: 8px;
+  white-space: pre-wrap;
+  font-size: 13px;
+}
+
+.log {
+  max-height: 180px;
+  overflow-y: auto;
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0;
+  padding-left: 16px;
+}
+
+.log li {
+  margin-bottom: 4px;
+}
+
+.hidden {
+  display: none;
+}
