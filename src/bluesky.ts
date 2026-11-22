@@ -8,6 +8,16 @@ export interface SkyReply {
   text: string;
 }
 
+export interface SkyNotification {
+  uri: string;
+  author: string;
+  handle: string;
+  reason: string;
+  time: string;
+  isRead: boolean;
+  subjectText: string;
+}
+
 export interface SkyPost {
   uri: string;
   cid: string;
@@ -205,5 +215,65 @@ export class BlueskyClient {
     post.repostUri = res.uri;
     post.reposts += 1;
     return true;
+  }
+
+  async fetchNotifications(
+    limit = 25,
+    cursor?: string,
+  ): Promise<{ notifications: SkyNotification[]; cursor?: string }> {
+    if (!this.agent) throw new Error('Not signed in');
+    const res = await this.agent.listNotifications({ limit, cursor });
+    const raw = res.data.notifications;
+
+    // Resolve subject post text for likes and reposts (batch up to 25 URIs).
+    const subjectUris = Array.from(
+      new Set(
+        raw
+          .filter(
+            (n) =>
+              (n.reason === 'like' ||
+                n.reason === 'repost' ||
+                n.reason === 'like-via-repost' ||
+                n.reason === 'repost-via-repost') &&
+              n.reasonSubject?.includes('/app.bsky.feed.post/'),
+          )
+          .map((n) => n.reasonSubject!)
+      ),
+    ).slice(0, 25);
+
+    const subjectTextMap = new Map<string, string>();
+    if (subjectUris.length > 0) {
+      try {
+        const postsRes = await this.agent.getPosts({ uris: subjectUris });
+        for (const p of postsRes.data.posts) {
+          const rec = p.record as { text?: string };
+          if (rec.text) {
+            subjectTextMap.set(p.uri, rec.text);
+          }
+        }
+      } catch {
+        // Non-fatal: fall back to showing notification without quoted subject text.
+      }
+    }
+
+    const notifications: SkyNotification[] = raw.map((n) => {
+      const rec = n.record as { text?: string };
+      const textFromRecord = typeof rec.text === 'string' ? rec.text : '';
+      const textFromSubject = n.reasonSubject ? (subjectTextMap.get(n.reasonSubject) ?? '') : '';
+      return {
+        uri: n.uri,
+        author: n.author.displayName || n.author.handle,
+        handle: n.author.handle,
+        reason: n.reason,
+        time: formatRelativeTime(n.indexedAt),
+        isRead: n.isRead,
+        subjectText: textFromRecord || textFromSubject,
+      };
+    });
+
+    return {
+      notifications,
+      cursor: res.data.cursor,
+    };
   }
 }

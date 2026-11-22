@@ -16,6 +16,7 @@ export const MENU_IDS = {
   REPOST: 2,
   SWITCH_FEED: 3,
   REFRESH: 4,
+  NOTIFICATIONS: 5,
 } as const;
 
 const CONTAINER_HEADER = 1;
@@ -91,6 +92,7 @@ export class GlassesDisplay {
           menuItems: [
             new MenuItemProperty({ itemID: MENU_IDS.LIKE, itemName: 'Like / Unlike' }),
             new MenuItemProperty({ itemID: MENU_IDS.REPOST, itemName: 'Repost / Undo' }),
+            new MenuItemProperty({ itemID: MENU_IDS.NOTIFICATIONS, itemName: 'Notifications' }),
             new MenuItemProperty({ itemID: MENU_IDS.SWITCH_FEED, itemName: 'Switch Feed' }),
             new MenuItemProperty({ itemID: MENU_IDS.REFRESH, itemName: 'Refresh Feed' }),
           ],

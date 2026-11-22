@@ -1,5 +1,11 @@
 import './style.css';
-import { BlueskyClient, type FeedName, type SkyPost, type StoredAuth } from './bluesky.ts';
+import {
+  BlueskyClient,
+  type FeedName,
+  type SkyNotification,
+  type SkyPost,
+  type StoredAuth,
+} from './bluesky.ts';
 import { GlassesDisplay, type GlassesScreen, MENU_IDS } from './glasses.ts';
 
 const STORAGE_KEY = 'bluersky_auth_v1';
@@ -73,6 +79,7 @@ appRoot.innerHTML = `
         <button id="btn-open" type="button">● Tap (Open/Back)</button>
         <button id="btn-like" type="button">●● 2xTap (Like)</button>
         <button id="btn-repost" type="button">↻ Repost</button>
+        <button id="btn-notifications" type="button">🔔 Notifications</button>
         <button id="btn-feed" type="button">⇄ Switch Feed</button>
         <button id="btn-refresh" type="button">⟳ Refresh</button>
       </div>
@@ -99,12 +106,16 @@ const mirrorEl = document.getElementById('mirror')!;
 const logEl = document.getElementById('log')!;
 
 const state = {
+  viewMode: 'feed' as 'feed' | 'notifications',
   feedName: 'Following' as FeedName,
   posts: [] as SkyPost[],
   cursor: undefined as string | undefined,
   index: 0,
   detailMode: false,
   detailScrollOffset: 0,
+  notifications: [] as SkyNotification[],
+  notifCursor: undefined as string | undefined,
+  notifIndex: 0,
   loading: false,
   loadingMore: false,
   toast: '',
@@ -188,12 +199,72 @@ function buildDetailLines(post: SkyPost): string[] {
   return lines;
 }
 
+function formatNotificationReason(reason: string): { icon: string; label: string } {
+  switch (reason) {
+    case 'like':
+    case 'like-via-repost':
+      return { icon: '♥', label: 'Liked your post' };
+    case 'repost':
+    case 'repost-via-repost':
+      return { icon: '↻', label: 'Reshared your post' };
+    case 'reply':
+      return { icon: '↳', label: 'Replied to you' };
+    case 'mention':
+      return { icon: '@', label: 'Mentioned you' };
+    case 'quote':
+      return { icon: '❝', label: 'Quoted your post' };
+    case 'follow':
+      return { icon: '+', label: 'Followed you' };
+    default:
+      return { icon: '•', label: reason };
+  }
+}
+
 function formatScreenContent(): GlassesScreen {
   if (!bsky.isAuthenticated()) {
     return {
       header: 'BluERSky  |  SIGN IN REQUIRED',
       body: 'Open BluERSky in the Even App on your phone and sign in with your Bluesky handle + App Password.',
       footer: 'Waiting for Bluesky authentication...',
+    };
+  }
+
+  if (state.viewMode === 'notifications') {
+    if (state.loading && state.notifications.length === 0) {
+      return {
+        header: 'BluERSky  |  NOTIFICATIONS',
+        body: 'Loading your notifications...',
+        footer: 'Please wait...',
+      };
+    }
+
+    if (state.notifications.length === 0) {
+      return {
+        header: 'BluERSky  |  NOTIFICATIONS',
+        body: 'No notifications yet.',
+        footer: 'Tap: Back to Feed  •  Hold: Menu',
+      };
+    }
+
+    const notif = state.notifications[state.notifIndex] ?? state.notifications[0];
+    const pos = `${state.notifIndex + 1}/${state.notifications.length}`;
+    const unreadTag = notif.isRead ? '' : ' [NEW]';
+    const header = state.toast
+      ? `BluERSky // ${state.toast}`
+      : `BluERSky  |  NOTIFS (${pos})${unreadTag}`;
+
+    const { icon, label } = formatNotificationReason(notif.reason);
+    const flatText = notif.subjectText.replace(/\s+/g, ' ').trim();
+    const snippet =
+      flatText.length > 115 ? flatText.slice(0, 112).trimEnd() + '...' : flatText;
+    const body = snippet
+      ? `${icon} ${notif.author} (@${notif.handle}) • ${notif.time}\n${label}:\n\n"${snippet}"`
+      : `${icon} ${notif.author} (@${notif.handle}) • ${notif.time}\n\n${label}`;
+
+    return {
+      header,
+      body,
+      footer: '↑↓ Next/Prev  •  Tap: Back to Feed  •  Hold: Menu',
     };
   }
 
@@ -261,7 +332,10 @@ function updateAccountUI(): void {
     loginCardEl.classList.add('hidden');
     accountCardEl.classList.remove('hidden');
     signedHandleEl.textContent = `@${bsky.handle ?? 'unknown'}`;
-    feedSummaryEl.textContent = `${state.feedName} feed • ${state.posts.length} posts loaded`;
+    feedSummaryEl.textContent =
+      state.viewMode === 'notifications'
+        ? `Notifications • ${state.notifications.length} loaded`
+        : `${state.feedName} feed • ${state.posts.length} posts loaded`;
   } else {
     loginCardEl.classList.remove('hidden');
     accountCardEl.classList.add('hidden');
@@ -315,7 +389,78 @@ async function loadMorePosts(): Promise<void> {
   }
 }
 
+async function loadNotifications(): Promise<void> {
+  if (!bsky.isAuthenticated()) return;
+  state.viewMode = 'notifications';
+  state.detailMode = false;
+  state.loading = true;
+  state.notifCursor = undefined;
+  await renderScreen();
+  try {
+    const res = await bsky.fetchNotifications(25);
+    state.notifications = res.notifications;
+    state.notifCursor = res.cursor;
+    state.notifIndex = 0;
+    addLog(`Loaded ${state.notifications.length} notifications`);
+  } catch (err) {
+    addLog(`Notifications error: ${(err as Error).message}`);
+    setToast('Notif load error');
+  } finally {
+    state.loading = false;
+    updateAccountUI();
+    await renderScreen();
+  }
+}
+
+async function loadMoreNotifications(): Promise<void> {
+  if (!bsky.isAuthenticated() || state.loadingMore || !state.notifCursor) return;
+  state.loadingMore = true;
+  setToast('Loading more...');
+  await renderScreen();
+  try {
+    const res = await bsky.fetchNotifications(25, state.notifCursor);
+    const seen = new Set(state.notifications.map((n) => n.uri));
+    const fresh = res.notifications.filter((n) => !seen.has(n.uri));
+    state.notifications.push(...fresh);
+    state.notifCursor = res.cursor;
+    setToast(`+${fresh.length} notifs`);
+    addLog(`Loaded ${fresh.length} more notifications (total ${state.notifications.length})`);
+  } catch (err) {
+    addLog(`Load more notifs error: ${(err as Error).message}`);
+    setToast('Load more failed');
+  } finally {
+    state.loadingMore = false;
+    updateAccountUI();
+    await renderScreen();
+  }
+}
+
 function scrollDown(): void {
+  if (state.viewMode === 'notifications') {
+    if (state.notifications.length === 0) return;
+    if (state.notifIndex < state.notifications.length - 1) {
+      state.notifIndex += 1;
+      if (
+        state.notifIndex >= state.notifications.length - 3 &&
+        state.notifCursor &&
+        !state.loadingMore
+      ) {
+        void loadMoreNotifications();
+      } else {
+        renderScreen().catch(console.error);
+      }
+      return;
+    }
+    if (state.notifCursor) {
+      void loadMoreNotifications();
+      return;
+    }
+    state.notifIndex = 0;
+    setToast('Top of notifs');
+    renderScreen().catch(console.error);
+    return;
+  }
+
   if (state.posts.length === 0) return;
   if (state.detailMode) {
     const allLines = buildDetailLines(state.posts[state.index]);
@@ -345,6 +490,14 @@ function scrollDown(): void {
 }
 
 function scrollUp(): void {
+  if (state.viewMode === 'notifications') {
+    if (state.notifIndex > 0) {
+      state.notifIndex -= 1;
+      renderScreen().catch(console.error);
+    }
+    return;
+  }
+
   if (state.posts.length === 0) return;
   if (state.detailMode) {
     state.detailScrollOffset = Math.max(0, state.detailScrollOffset - DETAIL_SCROLL_STEP);
@@ -359,6 +512,12 @@ function scrollUp(): void {
 }
 
 function toggleDetail(): void {
+  if (state.viewMode === 'notifications') {
+    state.viewMode = 'feed';
+    updateAccountUI();
+    renderScreen().catch(console.error);
+    return;
+  }
   if (state.posts.length === 0) return;
   state.detailMode = !state.detailMode;
   state.detailScrollOffset = 0;
@@ -401,9 +560,18 @@ async function handleRepost(): Promise<void> {
 }
 
 function switchFeed(): void {
+  state.viewMode = 'feed';
   state.feedName = state.feedName === 'Following' ? 'Discover' : 'Following';
   setToast(`Feed: ${state.feedName}`);
   loadFeed().catch(console.error);
+}
+
+function refreshCurrentView(): void {
+  if (state.viewMode === 'notifications') {
+    void loadNotifications();
+  } else {
+    void loadFeed();
+  }
 }
 
 loginFormEl.addEventListener('submit', async (e) => {
@@ -423,8 +591,11 @@ loginFormEl.addEventListener('submit', async (e) => {
 
 document.getElementById('btn-logout')!.addEventListener('click', () => {
   bsky.logout();
+  state.viewMode = 'feed';
   state.posts = [];
+  state.notifications = [];
   state.index = 0;
+  state.notifIndex = 0;
   state.detailMode = false;
   updateAccountUI();
   renderScreen().catch(console.error);
@@ -436,8 +607,9 @@ document.getElementById('btn-next')!.addEventListener('click', scrollDown);
 document.getElementById('btn-open')!.addEventListener('click', toggleDetail);
 document.getElementById('btn-like')!.addEventListener('click', () => void handleLike());
 document.getElementById('btn-repost')!.addEventListener('click', () => void handleRepost());
+document.getElementById('btn-notifications')!.addEventListener('click', () => void loadNotifications());
 document.getElementById('btn-feed')!.addEventListener('click', switchFeed);
-document.getElementById('btn-refresh')!.addEventListener('click', () => void loadFeed());
+document.getElementById('btn-refresh')!.addEventListener('click', refreshCurrentView);
 
 async function main(): Promise<void> {
   const initialScreen = formatScreenContent();
@@ -447,12 +619,15 @@ async function main(): Promise<void> {
     onScrollUp: scrollUp,
     onScrollDown: scrollDown,
     onClick: toggleDetail,
-    onDoubleClick: () => void handleLike(),
+    onDoubleClick: () => {
+      if (state.viewMode === 'feed') void handleLike();
+    },
     onMenuItem: (itemId) => {
-      if (itemId === MENU_IDS.LIKE) void handleLike();
-      else if (itemId === MENU_IDS.REPOST) void handleRepost();
+      if (itemId === MENU_IDS.LIKE && state.viewMode === 'feed') void handleLike();
+      else if (itemId === MENU_IDS.REPOST && state.viewMode === 'feed') void handleRepost();
+      else if (itemId === MENU_IDS.NOTIFICATIONS) void loadNotifications();
       else if (itemId === MENU_IDS.SWITCH_FEED) switchFeed();
-      else if (itemId === MENU_IDS.REFRESH) void loadFeed();
+      else if (itemId === MENU_IDS.REFRESH) refreshCurrentView();
     },
     onLog: addLog,
   });
