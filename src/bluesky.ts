@@ -1,6 +1,12 @@
-import { AtpAgent, type AtpSessionData, AppBskyFeedDefs } from '@atproto/api';
-
 export type FeedName = 'Following' | 'Discover';
+
+export interface AtpSessionData {
+  accessJwt: string;
+  refreshJwt: string;
+  handle: string;
+  did: string;
+  active?: boolean;
+}
 
 export interface SkyReply {
   author: string;
@@ -40,6 +46,44 @@ export interface StoredAuth {
   session: AtpSessionData;
 }
 
+interface RawAuthor {
+  handle: string;
+  displayName?: string;
+}
+
+interface RawPostView {
+  uri: string;
+  cid: string;
+  author: RawAuthor;
+  record?: { text?: string; createdAt?: string };
+  indexedAt?: string;
+  likeCount?: number;
+  repostCount?: number;
+  replyCount?: number;
+  viewer?: { like?: string; repost?: string };
+}
+
+interface RawFeedViewPost {
+  post: RawPostView;
+}
+
+interface RawThreadViewPost {
+  $type?: string;
+  post?: RawPostView;
+  replies?: RawThreadViewPost[];
+}
+
+interface RawNotification {
+  uri: string;
+  author: RawAuthor;
+  reason: string;
+  reasonSubject?: string;
+  record?: { text?: string };
+  isRead: boolean;
+  indexedAt?: string;
+}
+
+const DEFAULT_SERVICE = 'https://bsky.social';
 const DISCOVER_FEED_URI =
   'at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.generator/whats-hot';
 
@@ -54,9 +98,9 @@ export function formatRelativeTime(isoDate?: string): string {
   return `${Math.floor(diffHr / 24)}d`;
 }
 
-function mapFeedPost(item: AppBskyFeedDefs.FeedViewPost): SkyPost {
+function mapFeedPost(item: RawFeedViewPost): SkyPost {
   const post = item.post;
-  const record = post.record as { text?: string; createdAt?: string };
+  const record = post.record ?? {};
   return {
     uri: post.uri,
     cid: post.cid,
@@ -75,64 +119,133 @@ function mapFeedPost(item: AppBskyFeedDefs.FeedViewPost): SkyPost {
   };
 }
 
+function normalizeService(serviceUrl: string): string {
+  return (serviceUrl.trim() || DEFAULT_SERVICE).replace(/\/+$/, '');
+}
+
 export class BlueskyClient {
-  private agent: AtpAgent | null = null;
-  private service = 'https://bsky.social';
+  private session: AtpSessionData | null = null;
+  private service = DEFAULT_SERVICE;
   private onSessionUpdate?: (auth: StoredAuth | null) => void;
 
   constructor(onSessionUpdate?: (auth: StoredAuth | null) => void) {
     this.onSessionUpdate = onSessionUpdate;
   }
 
-  private createAgent(serviceUrl: string): AtpAgent {
-    this.service = serviceUrl.trim() || 'https://bsky.social';
-    return new AtpAgent({
-      service: this.service,
-      persistSession: (evt, session) => {
-        if ((evt === 'create' || evt === 'update') && session) {
-          this.onSessionUpdate?.({ service: this.service, session });
-        } else if (evt === 'expired') {
-          this.onSessionUpdate?.(null);
-        }
+  private async refreshSession(): Promise<boolean> {
+    if (!this.session?.refreshJwt) return false;
+    const res = await fetch(`${this.service}/xrpc/com.atproto.server.refreshSession`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.session.refreshJwt}`,
       },
     });
+    if (!res.ok) {
+      this.session = null;
+      this.onSessionUpdate?.(null);
+      return false;
+    }
+    const next = (await res.json()) as AtpSessionData;
+    this.session = next;
+    this.onSessionUpdate?.({ service: this.service, session: next });
+    return true;
+  }
+
+  private async xrpc<T>(
+    nsid: string,
+    options: {
+      method?: 'GET' | 'POST';
+      params?: URLSearchParams;
+      body?: unknown;
+      auth?: boolean;
+    } = {},
+    allowRefresh = true,
+  ): Promise<T> {
+    const { method = 'GET', params, body, auth = true } = options;
+    if (auth && !this.session) {
+      throw new Error('Not signed in');
+    }
+
+    const query = params && params.toString() ? `?${params.toString()}` : '';
+    const headers: Record<string, string> = {};
+    if (auth && this.session) {
+      headers.Authorization = `Bearer ${this.session.accessJwt}`;
+    }
+    if (body !== undefined) {
+      headers['Content-Type'] = 'application/json';
+    }
+
+    const res = await fetch(`${this.service}/xrpc/${nsid}${query}`, {
+      method,
+      headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+
+    if (res.status === 401 && auth && allowRefresh) {
+      const refreshed = await this.refreshSession();
+      if (refreshed) {
+        return this.xrpc<T>(nsid, options, false);
+      }
+    }
+
+    if (!res.ok) {
+      let detail = `${res.status} ${res.statusText}`;
+      try {
+        const errJson = (await res.json()) as { message?: string; error?: string };
+        if (errJson.message) detail = errJson.message;
+        else if (errJson.error) detail = errJson.error;
+      } catch {
+        // Keep HTTP status text.
+      }
+      throw new Error(detail);
+    }
+
+    if (res.status === 204) return undefined as T;
+    const text = await res.text();
+    return (text ? JSON.parse(text) : undefined) as T;
   }
 
   async login(serviceUrl: string, identifier: string, password: string): Promise<StoredAuth> {
-    const agent = this.createAgent(serviceUrl);
-    const res = await agent.login({
-      identifier: identifier.trim(),
-      password: password.trim(),
-    });
-    if (!res.success || !agent.session) {
+    this.service = normalizeService(serviceUrl);
+    const session = await this.xrpc<AtpSessionData>(
+      'com.atproto.server.createSession',
+      {
+        method: 'POST',
+        auth: false,
+        body: {
+          identifier: identifier.trim(),
+          password: password.trim(),
+        },
+      },
+      false,
+    );
+    if (!session?.accessJwt) {
       throw new Error('Bluesky login did not return a valid session');
     }
-    this.agent = agent;
-    const auth: StoredAuth = { service: this.service, session: agent.session };
+    this.session = session;
+    const auth: StoredAuth = { service: this.service, session };
     this.onSessionUpdate?.(auth);
     return auth;
   }
 
   async resume(stored: StoredAuth): Promise<void> {
-    const agent = this.createAgent(stored.service);
-    const res = await agent.resumeSession(stored.session);
-    if (!res.success) {
-      throw new Error('Failed to resume saved Bluesky session');
-    }
-    this.agent = agent;
+    this.service = normalizeService(stored.service);
+    this.session = stored.session;
+    // Validate session; automatically refreshes if accessJwt expired.
+    await this.xrpc<{ did: string; handle: string }>('com.atproto.server.getSession');
   }
 
   logout(): void {
-    this.agent = null;
+    this.session = null;
     this.onSessionUpdate?.(null);
   }
 
   get handle(): string | undefined {
-    return this.agent?.session?.handle;
+    return this.session?.handle;
   }
 
   isAuthenticated(): boolean {
-    return Boolean(this.agent?.session);
+    return Boolean(this.session?.accessJwt);
   }
 
   async fetchFeed(
@@ -140,41 +253,50 @@ export class BlueskyClient {
     limit = 25,
     cursor?: string,
   ): Promise<{ posts: SkyPost[]; cursor?: string }> {
-    if (!this.agent) throw new Error('Not signed in');
+    const params = new URLSearchParams();
+    params.set('limit', String(limit));
+    if (cursor) params.set('cursor', cursor);
+
     if (feedName === 'Following') {
-      const res = await this.agent.getTimeline({ limit, cursor });
+      const data = await this.xrpc<{ feed: RawFeedViewPost[]; cursor?: string }>(
+        'app.bsky.feed.getTimeline',
+        { params },
+      );
       return {
-        posts: res.data.feed.map(mapFeedPost),
-        cursor: res.data.cursor,
+        posts: (data.feed ?? []).map(mapFeedPost),
+        cursor: data.cursor,
       };
     }
-    const res = await this.agent.app.bsky.feed.getFeed({
-      feed: DISCOVER_FEED_URI,
-      limit,
-      cursor,
-    });
+
+    params.set('feed', DISCOVER_FEED_URI);
+    const data = await this.xrpc<{ feed: RawFeedViewPost[]; cursor?: string }>(
+      'app.bsky.feed.getFeed',
+      { params },
+    );
     return {
-      posts: res.data.feed.map(mapFeedPost),
-      cursor: res.data.cursor,
+      posts: (data.feed ?? []).map(mapFeedPost),
+      cursor: data.cursor,
     };
   }
 
   async fetchReplies(post: SkyPost): Promise<SkyReply[]> {
-    if (!this.agent) throw new Error('Not signed in');
-    const res = await this.agent.getPostThread({
+    const params = new URLSearchParams({
       uri: post.uri,
-      depth: 1,
-      parentHeight: 0,
+      depth: '1',
+      parentHeight: '0',
     });
-    const thread = res.data.thread;
-    if (!AppBskyFeedDefs.isThreadViewPost(thread) || !thread.replies) {
+    const data = await this.xrpc<{ thread?: RawThreadViewPost }>('app.bsky.feed.getPostThread', {
+      params,
+    });
+    const thread = data.thread;
+    if (!thread?.replies) {
       post.replies = [];
       return [];
     }
     const replies: SkyReply[] = [];
     for (const r of thread.replies) {
-      if (!AppBskyFeedDefs.isThreadViewPost(r)) continue;
-      const rec = r.post.record as { text?: string; createdAt?: string };
+      if (!r.post) continue;
+      const rec = r.post.record ?? {};
       replies.push({
         author: r.post.author.handle,
         time: formatRelativeTime(rec.createdAt ?? r.post.indexedAt),
@@ -186,15 +308,36 @@ export class BlueskyClient {
   }
 
   async toggleLike(post: SkyPost): Promise<boolean> {
-    if (!this.agent) throw new Error('Not signed in');
+    if (!this.session) throw new Error('Not signed in');
     if (post.liked && post.likeUri) {
-      await this.agent.deleteLike(post.likeUri);
+      const rkey = post.likeUri.split('/').pop();
+      if (rkey) {
+        await this.xrpc('com.atproto.repo.deleteRecord', {
+          method: 'POST',
+          body: {
+            repo: this.session.did,
+            collection: 'app.bsky.feed.like',
+            rkey,
+          },
+        });
+      }
       post.liked = false;
       post.likeUri = undefined;
       post.likes = Math.max(0, post.likes - 1);
       return false;
     }
-    const res = await this.agent.like(post.uri, post.cid);
+    const res = await this.xrpc<{ uri: string }>('com.atproto.repo.createRecord', {
+      method: 'POST',
+      body: {
+        repo: this.session.did,
+        collection: 'app.bsky.feed.like',
+        record: {
+          $type: 'app.bsky.feed.like',
+          subject: { uri: post.uri, cid: post.cid },
+          createdAt: new Date().toISOString(),
+        },
+      },
+    });
     post.liked = true;
     post.likeUri = res.uri;
     post.likes += 1;
@@ -202,15 +345,36 @@ export class BlueskyClient {
   }
 
   async toggleRepost(post: SkyPost): Promise<boolean> {
-    if (!this.agent) throw new Error('Not signed in');
+    if (!this.session) throw new Error('Not signed in');
     if (post.reposted && post.repostUri) {
-      await this.agent.deleteRepost(post.repostUri);
+      const rkey = post.repostUri.split('/').pop();
+      if (rkey) {
+        await this.xrpc('com.atproto.repo.deleteRecord', {
+          method: 'POST',
+          body: {
+            repo: this.session.did,
+            collection: 'app.bsky.feed.repost',
+            rkey,
+          },
+        });
+      }
       post.reposted = false;
       post.repostUri = undefined;
       post.reposts = Math.max(0, post.reposts - 1);
       return false;
     }
-    const res = await this.agent.repost(post.uri, post.cid);
+    const res = await this.xrpc<{ uri: string }>('com.atproto.repo.createRecord', {
+      method: 'POST',
+      body: {
+        repo: this.session.did,
+        collection: 'app.bsky.feed.repost',
+        record: {
+          $type: 'app.bsky.feed.repost',
+          subject: { uri: post.uri, cid: post.cid },
+          createdAt: new Date().toISOString(),
+        },
+      },
+    });
     post.reposted = true;
     post.repostUri = res.uri;
     post.reposts += 1;
@@ -221,11 +385,16 @@ export class BlueskyClient {
     limit = 25,
     cursor?: string,
   ): Promise<{ notifications: SkyNotification[]; cursor?: string }> {
-    if (!this.agent) throw new Error('Not signed in');
-    const res = await this.agent.listNotifications({ limit, cursor });
-    const raw = res.data.notifications;
+    const params = new URLSearchParams();
+    params.set('limit', String(limit));
+    if (cursor) params.set('cursor', cursor);
 
-    // Resolve subject post text for likes and reposts (batch up to 25 URIs).
+    const data = await this.xrpc<{ notifications: RawNotification[]; cursor?: string }>(
+      'app.bsky.notification.listNotifications',
+      { params },
+    );
+    const raw = data.notifications ?? [];
+
     const subjectUris = Array.from(
       new Set(
         raw
@@ -237,18 +406,23 @@ export class BlueskyClient {
                 n.reason === 'repost-via-repost') &&
               n.reasonSubject?.includes('/app.bsky.feed.post/'),
           )
-          .map((n) => n.reasonSubject!)
+          .map((n) => n.reasonSubject!),
       ),
     ).slice(0, 25);
 
     const subjectTextMap = new Map<string, string>();
     if (subjectUris.length > 0) {
       try {
-        const postsRes = await this.agent.getPosts({ uris: subjectUris });
-        for (const p of postsRes.data.posts) {
-          const rec = p.record as { text?: string };
-          if (rec.text) {
-            subjectTextMap.set(p.uri, rec.text);
+        const postParams = new URLSearchParams();
+        for (const u of subjectUris) {
+          postParams.append('uris', u);
+        }
+        const postsData = await this.xrpc<{ posts: RawPostView[] }>('app.bsky.feed.getPosts', {
+          params: postParams,
+        });
+        for (const p of postsData.posts ?? []) {
+          if (p.record?.text) {
+            subjectTextMap.set(p.uri, p.record.text);
           }
         }
       } catch {
@@ -257,8 +431,7 @@ export class BlueskyClient {
     }
 
     const notifications: SkyNotification[] = raw.map((n) => {
-      const rec = n.record as { text?: string };
-      const textFromRecord = typeof rec.text === 'string' ? rec.text : '';
+      const textFromRecord = typeof n.record?.text === 'string' ? n.record.text : '';
       const textFromSubject = n.reasonSubject ? (subjectTextMap.get(n.reasonSubject) ?? '') : '';
       return {
         uri: n.uri,
@@ -273,7 +446,7 @@ export class BlueskyClient {
 
     return {
       notifications,
-      cursor: res.data.cursor,
+      cursor: data.cursor,
     };
   }
 }

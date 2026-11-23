@@ -82,6 +82,7 @@ appRoot.innerHTML = `
         <button id="btn-notifications" type="button">🔔 Notifications</button>
         <button id="btn-feed" type="button">⇄ Switch Feed</button>
         <button id="btn-refresh" type="button">⟳ Refresh</button>
+        <button id="btn-exit" class="danger" type="button">✕ Exit Glasses</button>
       </div>
     </div>
 
@@ -610,6 +611,16 @@ document.getElementById('btn-repost')!.addEventListener('click', () => void hand
 document.getElementById('btn-notifications')!.addEventListener('click', () => void loadNotifications());
 document.getElementById('btn-feed')!.addEventListener('click', switchFeed);
 document.getElementById('btn-refresh')!.addEventListener('click', refreshCurrentView);
+document.getElementById('btn-exit')!.addEventListener('click', () => {
+  void glasses.shutDown(0).then(() => {
+    statusEl.textContent = 'Glasses page closed.';
+    addLog('Closed glasses page via shutDownPageContainer(0)');
+  });
+});
+
+window.addEventListener('pagehide', () => {
+  void glasses.shutDown(0);
+});
 
 async function main(): Promise<void> {
   const initialScreen = formatScreenContent();
@@ -628,6 +639,12 @@ async function main(): Promise<void> {
       else if (itemId === MENU_IDS.NOTIFICATIONS) void loadNotifications();
       else if (itemId === MENU_IDS.SWITCH_FEED) switchFeed();
       else if (itemId === MENU_IDS.REFRESH) refreshCurrentView();
+      else if (itemId === MENU_IDS.EXIT) {
+        void glasses.shutDown(0).then(() => {
+          statusEl.textContent = 'Glasses page closed.';
+          addLog('Closed glasses page via menu Exit App');
+        });
+      }
     },
     onLog: addLog,
   });

@@ -17,6 +17,7 @@ export const MENU_IDS = {
   SWITCH_FEED: 3,
   REFRESH: 4,
   NOTIFICATIONS: 5,
+  EXIT: 6,
 } as const;
 
 const CONTAINER_HEADER = 1;
@@ -95,6 +96,7 @@ export class GlassesDisplay {
             new MenuItemProperty({ itemID: MENU_IDS.NOTIFICATIONS, itemName: 'Notifications' }),
             new MenuItemProperty({ itemID: MENU_IDS.SWITCH_FEED, itemName: 'Switch Feed' }),
             new MenuItemProperty({ itemID: MENU_IDS.REFRESH, itemName: 'Refresh Feed' }),
+            new MenuItemProperty({ itemID: MENU_IDS.EXIT, itemName: 'Exit App' }),
           ],
         }),
       }),
@@ -136,12 +138,23 @@ export class GlassesDisplay {
         case OsEventTypeList.LONG_PRESS_EVENT:
           handlers.onLog('Long press detected');
           break;
+        case OsEventTypeList.SYSTEM_EXIT_EVENT:
+        case OsEventTypeList.ABNORMAL_EXIT_EVENT:
+          handlers.onLog(`Exit event (${eventType}) -> shutting down page container`);
+          void this.shutDown(0);
+          break;
         default:
           handlers.onLog(`Unhandled eventType: ${eventType}`);
       }
     });
 
     return this.initialized;
+  }
+
+  async shutDown(exitMode = 0): Promise<void> {
+    if (!this.bridge || !this.initialized) return;
+    this.initialized = false;
+    await this.bridge.shutDownPageContainer(exitMode);
   }
 
   async render(screen: GlassesScreen): Promise<void> {

@@ -1,7 +1,7 @@
 {
   "name": "bluersky",
   "private": true,
-  "version": "0.1.4",
+  "version": "0.1.5",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -13,7 +13,6 @@
     "vite": "^8.3.6"
   },
   "dependencies": {
-    "@atproto/api": "^0.15.0",
     "@evenrealities/even_hub_sdk": "^0.0.16"
   }
 }
