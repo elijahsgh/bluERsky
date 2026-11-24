@@ -1,6 +1,6 @@
 # BluERSky
 
-A minimalist Bluesky (ATProto) reader for **Even Realities G2** smart glasses, built with `@evenrealities/even_hub_sdk` and `@atproto/api`.
+A minimalist Bluesky (ATProto) reader for **Even Realities G2** smart glasses, built with `@evenrealities/even_hub_sdk` and lightweight ATProto XRPC requests.
 
 ![BluERSky on Even G2](./glasses_20261121152449.png)
 
@@ -20,7 +20,7 @@ A minimalist Bluesky (ATProto) reader for **Even Realities G2** smart glasses, b
 | **Scroll Up** | Previous post | Scroll text & replies up |
 | **Single Tap** | Open post detail + replies | Back to feed |
 | **Double Tap** | Exit dialogue (`shutDownPageContainer(1)`) | Back to feed |
-| **Hold (Menu)** | Like, Repost, Notifications, Switch Feed, Refresh | Like, Repost, Notifications, Switch Feed, Refresh |
+| **Hold (Menu)** | Like, Repost, Notifications, Switch Feed, Refresh, Exit App | Like, Repost, Notifications, Switch Feed, Refresh, Exit App |
 
 ## Authentication
 
