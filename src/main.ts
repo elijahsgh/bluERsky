@@ -77,7 +77,8 @@ appRoot.innerHTML = `
         <button id="btn-prev" type="button">↑ Up / Prev</button>
         <button id="btn-next" type="button">↓ Down / Next</button>
         <button id="btn-open" type="button">● Tap (Open/Back)</button>
-        <button id="btn-like" type="button">●● 2xTap (Like)</button>
+        <button id="btn-double-tap" type="button">●● 2xTap (Exit/Back)</button>
+        <button id="btn-like" type="button">♥ Like</button>
         <button id="btn-repost" type="button">↻ Repost</button>
         <button id="btn-notifications" type="button">🔔 Notifications</button>
         <button id="btn-feed" type="button">⇄ Switch Feed</button>
@@ -226,7 +227,7 @@ function formatScreenContent(): GlassesScreen {
     return {
       header: 'BluERSky  |  SIGN IN REQUIRED',
       body: 'Open BluERSky in the Even App on your phone and sign in with your Bluesky handle + App Password.',
-      footer: 'Waiting for Bluesky authentication...',
+      footer: '2xTap: Exit  •  Sign in on phone',
     };
   }
 
@@ -235,7 +236,7 @@ function formatScreenContent(): GlassesScreen {
       return {
         header: 'BluERSky  |  NOTIFICATIONS',
         body: 'Loading your notifications...',
-        footer: 'Please wait...',
+        footer: 'Tap/2xTap: Back  •  Hold: Menu',
       };
     }
 
@@ -243,7 +244,7 @@ function formatScreenContent(): GlassesScreen {
       return {
         header: 'BluERSky  |  NOTIFICATIONS',
         body: 'No notifications yet.',
-        footer: 'Tap: Back to Feed  •  Hold: Menu',
+        footer: 'Tap/2xTap: Back  •  Hold: Menu',
       };
     }
 
@@ -265,7 +266,7 @@ function formatScreenContent(): GlassesScreen {
     return {
       header,
       body,
-      footer: '↑↓ Next/Prev  •  Tap: Back to Feed  •  Hold: Menu',
+      footer: '↑↓ Next/Prev  •  Tap/2xTap: Back  •  Hold: Menu',
     };
   }
 
@@ -273,7 +274,7 @@ function formatScreenContent(): GlassesScreen {
     return {
       header: `BluERSky  |  ${state.feedName.toUpperCase()}`,
       body: 'Loading your Bluesky feed...',
-      footer: 'Please wait...',
+      footer: '2xTap: Exit  •  Please wait...',
     };
   }
 
@@ -281,7 +282,7 @@ function formatScreenContent(): GlassesScreen {
     return {
       header: `BluERSky  |  ${state.feedName.toUpperCase()}`,
       body: 'No posts found in this feed.',
-      footer: 'Hold: Menu to Switch Feed or Refresh',
+      footer: '2xTap: Exit  •  Hold: Menu',
     };
   }
 
@@ -316,8 +317,8 @@ function formatScreenContent(): GlassesScreen {
   }
 
   const footer = state.detailMode
-    ? '↑↓ Scroll  •  Tap: Back  •  2xTap: Like  •  Hold: Menu'
-    : '↑↓ Post  •  Tap: Open  •  2xTap: Like  •  Hold: Menu';
+    ? '↑↓ Scroll  •  Tap/2xTap: Back  •  Hold: Menu'
+    : '↑↓ Post  •  Tap: Open  •  2xTap: Exit  •  Hold: Menu';
 
   return { header, body, footer };
 }
@@ -603,9 +604,27 @@ document.getElementById('btn-logout')!.addEventListener('click', () => {
   addLog('Signed out');
 });
 
+async function handleDoubleClick(): Promise<void> {
+  if (state.viewMode === 'notifications') {
+    state.viewMode = 'feed';
+    updateAccountUI();
+    await renderScreen();
+    return;
+  }
+  if (state.detailMode) {
+    state.detailMode = false;
+    state.detailScrollOffset = 0;
+    await renderScreen();
+    return;
+  }
+  addLog('Double tap on root page -> shutDownPageContainer(1)');
+  await glasses.requestExit();
+}
+
 document.getElementById('btn-prev')!.addEventListener('click', scrollUp);
 document.getElementById('btn-next')!.addEventListener('click', scrollDown);
 document.getElementById('btn-open')!.addEventListener('click', toggleDetail);
+document.getElementById('btn-double-tap')!.addEventListener('click', () => void handleDoubleClick());
 document.getElementById('btn-like')!.addEventListener('click', () => void handleLike());
 document.getElementById('btn-repost')!.addEventListener('click', () => void handleRepost());
 document.getElementById('btn-notifications')!.addEventListener('click', () => void loadNotifications());
@@ -630,9 +649,7 @@ async function main(): Promise<void> {
     onScrollUp: scrollUp,
     onScrollDown: scrollDown,
     onClick: toggleDetail,
-    onDoubleClick: () => {
-      if (state.viewMode === 'feed') void handleLike();
-    },
+    onDoubleClick: () => void handleDoubleClick(),
     onMenuItem: (itemId) => {
       if (itemId === MENU_IDS.LIKE && state.viewMode === 'feed') void handleLike();
       else if (itemId === MENU_IDS.REPOST && state.viewMode === 'feed') void handleRepost();

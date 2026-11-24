@@ -19,7 +19,7 @@ A minimalist Bluesky (ATProto) reader for **Even Realities G2** smart glasses, b
 | **Scroll Down** | Next post (auto-loads next 25) | Scroll text & replies down |
 | **Scroll Up** | Previous post | Scroll text & replies up |
 | **Single Tap** | Open post detail + replies | Back to feed |
-| **Double Tap** | Like / Unlike | Like / Unlike |
+| **Double Tap** | Exit dialogue (`shutDownPageContainer(1)`) | Back to feed |
 | **Hold (Menu)** | Like, Repost, Notifications, Switch Feed, Refresh | Like, Repost, Notifications, Switch Feed, Refresh |
 
 ## Authentication

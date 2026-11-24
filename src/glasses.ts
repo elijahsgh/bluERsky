@@ -185,6 +185,11 @@ export class GlassesDisplay {
     );
   }
 
+  async requestExit(): Promise<void> {
+    if (!this.bridge) return;
+    await this.bridge.shutDownPageContainer(1);
+  }
+
   async getStorage(key: string): Promise<string | null> {
     if (this.bridge) {
       const val = await this.bridge.getLocalStorage(key);
