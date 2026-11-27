@@ -120,6 +120,8 @@ const state = {
   notifIndex: 0,
   loading: false,
   loadingMore: false,
+  feedError: null as string | null,
+  notifError: null as string | null,
   toast: '',
 };
 
@@ -243,7 +245,9 @@ function formatScreenContent(): GlassesScreen {
     if (state.notifications.length === 0) {
       return {
         header: 'BluERSky  |  NOTIFICATIONS',
-        body: 'No notifications yet.',
+        body: state.notifError
+          ? `Failed to load notifications:\n${state.notifError}`
+          : 'No notifications yet.',
         footer: 'Tap/2xTap: Back  •  Hold: Menu',
       };
     }
@@ -281,7 +285,9 @@ function formatScreenContent(): GlassesScreen {
   if (state.posts.length === 0) {
     return {
       header: `BluERSky  |  ${state.feedName.toUpperCase()}`,
-      body: 'No posts found in this feed.',
+      body: state.feedError
+        ? `Failed to load feed:\n${state.feedError}`
+        : 'No posts found in this feed.',
       footer: '2xTap: Exit  •  Hold: Menu',
     };
   }
@@ -347,6 +353,7 @@ function updateAccountUI(): void {
 async function loadFeed(): Promise<void> {
   if (!bsky.isAuthenticated()) return;
   state.loading = true;
+  state.feedError = null;
   state.cursor = undefined;
   await renderScreen();
   try {
@@ -359,6 +366,7 @@ async function loadFeed(): Promise<void> {
     addLog(`Loaded ${state.posts.length} posts (${state.feedName})`);
   } catch (err) {
     const msg = (err as Error).message;
+    state.feedError = msg;
     addLog(`Feed error: ${msg}`);
     setToast('Feed load error');
   } finally {
@@ -396,6 +404,7 @@ async function loadNotifications(): Promise<void> {
   state.viewMode = 'notifications';
   state.detailMode = false;
   state.loading = true;
+  state.notifError = null;
   state.notifCursor = undefined;
   await renderScreen();
   try {
@@ -405,7 +414,9 @@ async function loadNotifications(): Promise<void> {
     state.notifIndex = 0;
     addLog(`Loaded ${state.notifications.length} notifications`);
   } catch (err) {
-    addLog(`Notifications error: ${(err as Error).message}`);
+    const msg = (err as Error).message;
+    state.notifError = msg;
+    addLog(`Notifications error: ${msg}`);
     setToast('Notif load error');
   } finally {
     state.loading = false;

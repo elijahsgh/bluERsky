@@ -1,11 +1,20 @@
 export type FeedName = 'Following' | 'Discover';
 
+export interface DidDoc {
+  service?: Array<{
+    id?: string;
+    type?: string;
+    serviceEndpoint?: string;
+  }>;
+}
+
 export interface AtpSessionData {
   accessJwt: string;
   refreshJwt: string;
   handle: string;
   did: string;
   active?: boolean;
+  didDoc?: DidDoc;
 }
 
 export interface SkyReply {
@@ -123,6 +132,13 @@ function normalizeService(serviceUrl: string): string {
   return (serviceUrl.trim() || DEFAULT_SERVICE).replace(/\/+$/, '');
 }
 
+function extractPdsEndpoint(didDoc?: DidDoc): string | undefined {
+  const svc = didDoc?.service?.find(
+    (s) => s.id === '#atproto_pds' || s.type === 'AtprotoPersonalDataServer',
+  );
+  return svc?.serviceEndpoint ? normalizeService(svc.serviceEndpoint) : undefined;
+}
+
 export class BlueskyClient {
   private session: AtpSessionData | null = null;
   private service = DEFAULT_SERVICE;
@@ -130,6 +146,13 @@ export class BlueskyClient {
 
   constructor(onSessionUpdate?: (auth: StoredAuth | null) => void) {
     this.onSessionUpdate = onSessionUpdate;
+  }
+
+  private applyDidDocService(didDoc?: DidDoc): void {
+    const pds = extractPdsEndpoint(didDoc);
+    if (pds) {
+      this.service = pds;
+    }
   }
 
   private async refreshSession(): Promise<boolean> {
@@ -146,6 +169,7 @@ export class BlueskyClient {
       return false;
     }
     const next = (await res.json()) as AtpSessionData;
+    this.applyDidDocService(next.didDoc);
     this.session = next;
     this.onSessionUpdate?.({ service: this.service, session: next });
     return true;
@@ -181,22 +205,26 @@ export class BlueskyClient {
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
 
-    if (res.status === 401 && auth && allowRefresh) {
-      const refreshed = await this.refreshSession();
-      if (refreshed) {
-        return this.xrpc<T>(nsid, options, false);
-      }
-    }
-
     if (!res.ok) {
       let detail = `${res.status} ${res.statusText}`;
+      let errCode: string | undefined;
       try {
         const errJson = (await res.json()) as { message?: string; error?: string };
+        errCode = errJson.error;
         if (errJson.message) detail = errJson.message;
         else if (errJson.error) detail = errJson.error;
       } catch {
         // Keep HTTP status text.
       }
+
+      // ATProto PDS returns HTTP 400 with error "ExpiredToken" (or 401) when accessJwt expires.
+      if ((res.status === 401 || errCode === 'ExpiredToken') && auth && allowRefresh) {
+        const refreshed = await this.refreshSession();
+        if (refreshed) {
+          return this.xrpc<T>(nsid, options, false);
+        }
+      }
+
       throw new Error(detail);
     }
 
@@ -222,6 +250,7 @@ export class BlueskyClient {
     if (!session?.accessJwt) {
       throw new Error('Bluesky login did not return a valid session');
     }
+    this.applyDidDocService(session.didDoc);
     this.session = session;
     const auth: StoredAuth = { service: this.service, session };
     this.onSessionUpdate?.(auth);
@@ -230,9 +259,17 @@ export class BlueskyClient {
 
   async resume(stored: StoredAuth): Promise<void> {
     this.service = normalizeService(stored.service);
+    this.applyDidDocService(stored.session?.didDoc);
     this.session = stored.session;
-    // Validate session; automatically refreshes if accessJwt expired.
-    await this.xrpc<{ did: string; handle: string }>('com.atproto.server.getSession');
+    // Validate session; automatically refreshes if accessJwt expired and upgrades PDS endpoint if needed.
+    const info = await this.xrpc<{ did: string; handle: string; didDoc?: DidDoc }>(
+      'com.atproto.server.getSession',
+    );
+    const prevService = this.service;
+    this.applyDidDocService(info.didDoc);
+    if (this.service !== prevService && this.session) {
+      this.onSessionUpdate?.({ service: this.service, session: this.session });
+    }
   }
 
   logout(): void {
